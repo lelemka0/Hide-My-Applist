@@ -40,7 +40,7 @@ class PackageManagerService : IXposedHookLoadPackage {
     private var config = JsonConfig()
 
     @Volatile
-    private var configStr = "{}"
+    private var configStr = JsonConfig().toString()
 
     @Volatile
     private var interceptionCount = 0
@@ -134,19 +134,29 @@ class PackageManagerService : IXposedHookLoadPackage {
 
     private fun isUseHook(callerName: String?, hookMethod: String): Boolean {
         if (callerName == APPNAME && !config.HookSelf) return false
-        val tplName = config.Scope[callerName] ?: return false
-        val template = config.Templates[tplName] ?: return false
-        return template.EnableAllHooks or template.ApplyHooks.contains(hookMethod)
+        val scope = config.Scopes[callerName] ?: return false
+        val mainTplName = scope.MainTemplate ?: scope.TemplateLists.elementAt(0)
+        val mainTpl = config.Templates[mainTplName] ?: return false
+        return mainTpl.EnableAllHooks or mainTpl.ApplyHooks.contains(hookMethod)
     }
 
     private fun isToHide(callerName: String?, queryName: String?): Boolean {
         if (callerName == null || queryName == null) return false
         if (callerName in queryName) return false
-        val tplName = config.Scope[callerName] ?: return false
-        val template = config.Templates[tplName] ?: return false
-        if (template.WhiteList && template.ExcludeSystemApps && queryName in systemApps) return false
-        val inList = queryName in template.HideApps
-        return template.WhiteList xor inList
+        val scope = config.Scopes[callerName] ?: return false
+        val mainTplName = scope.MainTemplate ?: scope.TemplateLists.elementAt(0)
+        val mainTpl = config.Templates[mainTplName] ?: return false
+        var HideApps = mutableSetOf<String>()
+        for (tplName in scope.TemplateLists) {
+            if (config.Templates[tplName]==null) {
+                li("@Template not found. caller: $callerName template: $tplName")
+                continue
+            }
+            HideApps.addAll(config.Templates[tplName]!!.HideApps)
+        }
+        if (mainTpl.WhiteList && mainTpl.ExcludeSystemApps && queryName in systemApps) return false
+        val inList = queryName in HideApps
+        return mainTpl.WhiteList xor inList
     }
 
     private fun removeList(method: Method, hookName: String, pkgNameObjList: List<String>) {
@@ -290,8 +300,8 @@ class PackageManagerService : IXposedHookLoadPackage {
         } catch (e: FileNotFoundException) {
             li("Config not cached, waiting for preference provider")
         } catch (e: Exception) {
-            configStr = "{}"
             config = JsonConfig()
+            configStr = config.toString()
             le("Failed to read cached config, waiting for preference provider\n${e.stackTraceToString()}")
         }
         thread {
